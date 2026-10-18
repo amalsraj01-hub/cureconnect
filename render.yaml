@@ -18,7 +18,10 @@ services:
     # in requirements.txt resolve to the wheels they were tested with.
     envVars:
       - key: PYTHON_VERSION
-        value: "3.14.6"
+        # Render's current default (their docs list 3.14.8). Same cp314 wheel
+        # ABI as the local 3.14.6 venv, so the pinned packages resolve the
+        # same way; 3.14.8 is used because Render is guaranteed to offer it.
+        value: "3.14.8"
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
