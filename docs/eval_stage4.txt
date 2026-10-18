@@ -1,0 +1,93 @@
+﻿.................                                                        [100%]
+17 passed in 0.15s
+PYTEST_EXIT=0
+Accuracy on clean test split: 1.000
+NOTE: this is optimistic. Evaluate on your own realistic sentences too.
+Saved model to app/model.joblib
+==========================================================================
+CureConnect - model evaluation on realistic free-text sentences
+==========================================================================
+Sentences evaluated      : 125
+Distinct diseases        : 41
+Top-1 accuracy           : 45.6%  (57/125)
+Top-3 accuracy           : 75.2%  (94/125)
+Specialist-level top-1   : 70.4%  (88/125)  <- what the user actually sees
+Fallback below 0.30      : 86/125 (68.8%) -> 'Unclear' in the app
+--------------------------------------------------------------------------
+Top-1 confidence spread (how sure the model is on realistic text)
+  min 0.050   25% 0.114   median 0.188   75% 0.331   max 0.829   mean 0.264
+  histogram (one # per sentence):
+    0.00-0.05 :   1  #
+    0.05-0.10 :  22  ######################
+    0.10-0.20 :  44  ############################################
+    0.20-0.30 :  19  ###################
+    0.30-0.50 :  18  ##################
+    0.50-1.01 :  21  #####################
+--------------------------------------------------------------------------
+Threshold sweep: 'shown' = user gets a specialist answer,
+'fallback' = user gets 'Unclear, see a General Physician'
+ thresh   shown  fallback  top-1|shown  top-3|shown  top-1|hidden
+   0.05     99%        1%        46.0%        75.8%          0.0%
+   0.10     82%       18%        51.0%        82.4%         21.7%
+   0.15     58%       42%        64.4%        90.4%         19.2%
+   0.20     46%       54%        67.2%        93.1%         26.9%
+   0.25     40%       60%        74.0%        92.0%         26.7%
+   0.30     31%       69%        84.6%        97.4%         27.9%
+   0.40     20%       80%        96.0%       100.0%         33.0%
+   0.50     17%       83%       100.0%       100.0%         34.6%
+  'top-1|hidden' tells you whether the answers we hid were actually
+  worse than the ones we showed. If it is close, the gate is
+  throwing away correct answers for nothing.
+Coverage check           : every dataset disease has test sentences
+--------------------------------------------------------------------------
+disease                                    n    top-1    top-3
+--------------------------------------------------------------------------
+Arthritis                                  3      0%      33%
+Drug Reaction                              3      0%     100%
+GERD                                       3      0%     100%
+Hepatitis B                                3      0%      33%
+Hepatitis E                                3      0%       0%
+Hypertension                               3      0%      33%
+Hyperthyroidism                            3      0%      67%
+Hypoglycemia                               3      0%      33%
+Jaundice                                   3      0%      33%
+Peptic ulcer diseae                        3      0%      67%
+Pneumonia                                  3      0%      67%
+AIDS                                       3     33%      67%
+Chicken pox                                3     33%      33%
+Dengue                                     3     33%     100%
+Diabetes                                   3     33%     100%
+Gastroenteritis                            3     33%     100%
+Hepatitis C                                3     33%      67%
+Hepatitis D                                3     33%      67%
+Hypothyroidism                             3     33%     100%
+Malaria                                    3     33%     100%
+Osteoarthristis                            3     33%      33%
+Tuberculosis                               3     33%     100%
+hepatitis A                                3     33%      67%
+Allergy                                    4     50%      50%
+Bronchial Asthma                           3     67%     100%
+Chronic cholestasis                        3     67%      67%
+Common Cold                                3     67%     100%
+Dimorphic hemmorhoids(piles)               3     67%      67%
+Fungal infection                           3     67%     100%
+Migraine                                   3     67%      67%
+Typhoid                                    3     67%      67%
+Urinary tract infection                    3     67%     100%
+(vertigo) Paroymsal  Positional Vertigo    4     75%      75%
+Acne                                       3    100%     100%
+Alcoholic hepatitis                        3    100%     100%
+Cervical spondylosis                       3    100%     100%
+Heart attack                               3    100%     100%
+Impetigo                                   3    100%     100%
+Paralysis (brain hemorrhage)               3    100%     100%
+Psoriasis                                  3    100%     100%
+Varicose veins                             3    100%     100%
+--------------------------------------------------------------------------
+Example misses (up to 0 of 68):
+--------------------------------------------------------------------------
+Reminder: top-1 counts only the model's first guess. Top-3 counts the
+truth appearing anywhere in the first three guesses, which is what the
+app actually shows the user. Specialist-level top-1 is the honest score
+for this app, since patients are sent to a specialist, not a diagnosis.
+This run does NOT test app/safety.py, which runs before the classifier.

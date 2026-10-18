@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CureConnect</title>
+<!-- Leaflet (the map) comes from a CDN; the page needs internet, like the doctor search itself. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; }
+  textarea { width: 100%; height: 100px; padding: .5rem; box-sizing: border-box; }
+  .coords { display: flex; gap: .5rem; flex-wrap: wrap; align-items: end; margin-top: .5rem; }
+  .coords label { font-size: .85rem; display: flex; flex-direction: column; gap: .2rem; }
+  .coords input { width: 9rem; padding: .4rem; }
+  button { padding: .6rem 1.2rem; margin-top: .5rem; cursor: pointer; }
+  .disclaimer { background: #fff7e0; border: 1px solid #e0c060; padding: .75rem; margin: 1rem 0; border-radius: 6px; }
+  .emergency { background: #ffe0e0; border: 2px solid #c00; padding: 1rem; font-weight: bold; border-radius: 6px; }
+  .notice { background: #fff7e0; border: 1px solid #e0c060; padding: .75rem; font-weight: bold; border-radius: 6px; }
+  .card { border: 1px solid #ddd; border-radius: 6px; padding: .75rem; margin: .5rem 0; }
+  .tag { font-size: .8rem; color: #a60; }
+  .alt { padding: .35rem 0; border-top: 1px solid #eee; }
+  .alt:first-of-type { border-top: none; }
+  #map { height: 340px; border-radius: 6px; margin: .75rem 0; display: none; border: 1px solid #ddd; }
+  .status { color: #555; margin: .75rem 0; }
+</style>
+</head>
+<body>
+<h1>CureConnect</h1>
+<!-- Shown before anything else, on every load. It is not decoration: it is the point of the app. -->
+<div class="disclaimer">CureConnect does not diagnose. It suggests a type of doctor to consult. In an emergency, call 112.</div>
+
+<textarea id="symptoms" placeholder="Describe your symptoms in plain language..."></textarea>
+
+<!-- Defaults are Kannur town centre, so a real Kannur query works before you grant location permission - and coordinates stay typeable for testing. -->
+<div class="coords">
+  <label>Latitude <input id="lat" type="number" step="any" value="11.8745"></label>
+  <label>Longitude <input id="lng" type="number" step="any" value="75.3704"></label>
+  <button type="button" onclick="fillMine()">Use my location</button>
+</div>
+<button onclick="go()">Find a doctor</button>
+
+<div id="out"></div>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+// Stage 9: this page is served by the FastAPI app itself, so everything is
+// same-origin and the path alone is enough - locally http://127.0.0.1:8000/,
+// after deploy your onrender.com URL. Opening the file directly (file://)
+// cannot work any more: use the served URL.
+const API = "";
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function fillMine() {
+  const out = document.getElementById("out");
+  if (!navigator.geolocation) {
+    out.textContent = "This browser cannot provide a location - type coordinates instead (Kannur: 11.8745, 75.3704).";
+    return;
+  }
+  out.textContent = "Getting your location...";
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      document.getElementById("lat").value = pos.coords.latitude.toFixed(4);
+      document.getElementById("lng").value = pos.coords.longitude.toFixed(4);
+      out.textContent = "";
+    },
+    () => { out.textContent = "Location permission was not granted - the Kannur coordinates above are still fine to use."; }
+  );
+}
+
+async function go() {
+  const symptoms = document.getElementById("symptoms").value.trim();
+  const out = document.getElementById("out");
+  const lat = parseFloat(document.getElementById("lat").value);
+  const lng = parseFloat(document.getElementById("lng").value);
+  if (symptoms.length < 3) { out.textContent = "Please describe your symptoms."; return; }
+  if (!isFinite(lat) || !isFinite(lng)) { out.textContent = "Latitude and longitude must be numbers."; return; }
+  hideMap();
+  out.innerHTML = '<p class="status">Asking CureConnect... the doctor search reads OpenStreetMap live, so the first answer can take up to about a minute if OpenStreetMap is slow.</p>';
+
+  let res;
+  try {
+    res = await fetch(API + "/recommend", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symptoms, lat, lng })
+    });
+  } catch (e) {
+    out.textContent = "Could not reach the server. Is 'uvicorn app.main:app --reload' running? (" + e + ")";
+    return;
+  }
+
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* non-JSON error body */ }
+
+  // The API's rate limit (10 searches/minute) answers 429 with Retry-After.
+  // The header is readable because app/main.py exposes it to CORS.
+  if (res.status === 429) {
+    const wait = res.headers.get("Retry-After");
+    out.innerHTML = '<div class="notice">Too many searches too quickly. Please wait ' +
+      (wait ? esc(wait) + " seconds" : "about a minute") + " and try again.</div>";
+    return;
+  }
+  if (!res.ok || (data && data.detail)) {
+    out.textContent = "Error" + (data && data.detail ? ": " + data.detail : " (HTTP " + res.status + ")");
+    return;
+  }
+  render(data, out, lat, lng);
+}
+
+// When the gate answers "Unclear" the model still knows which conditions were
+// closest, and each points at a different kind of doctor. Showing them with
+// the specialist each one would mean is far more useful than a bare "we are
+// not sure" - as long as it is clear these are possibilities, not diagnoses.
+// The specialists come from the API (app/mapping.py), never a second copy of
+// the table in this file. Only shown for low-confidence answers.
+function alternatives(top3) {
+  if (!Array.isArray(top3) || top3.length === 0) return "";
+  let html = '<div class="card"><h3>Other possibilities we considered</h3>' +
+    '<p class="tag">Not diagnoses - just the closest matches, so you can mention them to a doctor.</p>';
+  top3.forEach(t => {
+    const pct = Math.round((t.confidence || 0) * 100);
+    const specialist = t.specialist ? 'Specialist: ' + esc(t.specialist) : '';
+    html += '<div class="alt"><b>' + esc(t.condition) + '</b> ' +
+      '<span class="tag">' + pct + '% match</span>' +
+      (specialist ? '<br>' + specialist : '') + '</div>';
+  });
+  return html + '</div>';
+}
+
+function render(data, out, lat, lng) {
+  if (data.emergency) {
+    // The banner is the whole answer - nothing else is drawn beside it.
+    out.innerHTML = '<div class="emergency">' + esc(data.message) + '</div>';
+    hideMap();
+    return;
+  }
+  const p = data.prediction;
+  let html = '<h2>Suggested specialist: ' + esc(p.specialist) + '</h2>';
+  if (p.low_confidence) {
+    html += '<p>We are not sure. A General Physician is a safe first step.</p>';
+    html += alternatives(p.top3);
+  } else {
+    const top = (p.top3 && p.top3[0]) || null;
+    const pct = top ? Math.round((top.confidence || 0) * 100) : null;
+    html += '<p class="tag">Closest match: ' + esc(p.condition) +
+      (pct !== null ? ' (' + pct + '% match)' : '') + '</p>';
+  }
+  // OpenStreetMap has no star ratings, so rating words appear only when a
+  // rating exists - "Rating null" would be worse than saying nothing, and
+  // calling unrated results "highly rated" is a claim we cannot support.
+  html += '<h3>Doctors and clinics near you</h3>';
+  if (data.doctors.length === 0) {
+    html += '<p>OpenStreetMap has no doctor or clinic mapped within range of ' +
+      'your location. Please contact a local hospital or your family doctor.</p>';
+  }
+  data.doctors.forEach(d => {
+    const bits = [];
+    if (d.rating !== null && d.rating !== undefined) {
+      bits.push('Rating ' + d.rating + ' (' + d.reviews + ' reviews)');
+    }
+    bits.push(d.distance_km + ' km');
+    if (d.kind) bits.push(esc(d.kind));
+    if (d.speciality) bits.push(esc(d.speciality));
+    const site = (d.website && /^https?:\/\//i.test(d.website)) ?
+      ' <a href="' + esc(d.website) + '" target="_blank" rel="noopener">website</a>' : '';
+    const onOsm = d.osm_url ?
+      ' <a class="tag" href="' + esc(d.osm_url) + '" target="_blank" rel="noopener">view on OpenStreetMap</a>' : '';
+    html += '<div class="card"><b>' + esc(d.name) + '</b>' +
+      (d.address ? '<br>' + esc(d.address) : '') +
+      '<br>' + bits.join(' &middot; ') +
+      (d.speciality_match ? ' <span class="tag">right speciality</span>' : '') +
+      (d.phone ? '<br><span class="tag">' + esc(d.phone) + '</span>' : '') +
+      (d.limited_reviews ? ' <span class="tag">limited reviews</span>' : '') +
+      site + onOsm +
+      '</div>';
+  });
+  // ODbL: results drawn from OpenStreetMap have to be credited wherever they
+  // are shown. This line is not decoration, it is the licence condition.
+  html += '<p class="tag">Doctor data from OpenStreetMap, ' +
+    '&copy; OpenStreetMap contributors (ODbL). ' +
+    '<a href="https://www.openstreetmap.org/copyright" target="_blank" ' +
+    'rel="noopener">openstreetmap.org/copyright</a></p>';
+  html += '<div class="disclaimer">' + esc(data.disclaimer) + '</div>';
+  out.innerHTML = html;
+  showMap(data.doctors, lat, lng);
+}
+
+// ---- Leaflet map ----------------------------------------------------------
+// One marker per doctor that came back with coordinates, plus a blue dot for
+// the searched location, view fitted around both. If the Leaflet CDN is
+// unreachable the list above still works - the map just stays hidden instead
+// of showing a broken grey box.
+let map = null;
+
+function hideMap() {
+  document.getElementById("map").style.display = "none";
+}
+
+function showMap(doctors, lat, lng) {
+  const el = document.getElementById("map");
+  const pts = doctors.filter(d => isFinite(d.lat) && isFinite(d.lng));
+  if (typeof L === "undefined" || pts.length === 0) { hideMap(); return; }
+  el.style.display = "block";
+  if (map) { map.remove(); map = null; }
+  map = L.map(el);
+  // Leaflet prints this line on the map itself; with the ODbL credit above
+  // the results, that is how the licence condition is met here.
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+  // The searched point: a plain blue dot, never a pin - a pin would read as
+  // if it were a clinic.
+  L.circleMarker([lat, lng], {radius: 7, color: "#1a73e8",
+    fillColor: "#1a73e8", fillOpacity: 0.9})
+    .bindPopup("Your search location").addTo(map);
+  const bounds = [[lat, lng]];
+  pts.forEach(d => {
+    L.marker([d.lat, d.lng]).addTo(map).bindPopup(
+      '<b>' + esc(d.name) + '</b><br>' + esc(d.kind || '') +
+      ' &middot; ' + d.distance_km + ' km' +
+      (d.speciality_match ? '<br><span style="color:#a60">right speciality</span>' : '') +
+      (d.osm_url ? '<br><a href="' + esc(d.osm_url) + '" target="_blank" rel="noopener">OpenStreetMap</a>' : '')
+    );
+    bounds.push([d.lat, d.lng]);
+  });
+  map.fitBounds(bounds, {maxZoom: 15, padding: [25, 25]});
+}
+</script>
+</body>
+</html>

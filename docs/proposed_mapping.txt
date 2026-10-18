@@ -1,0 +1,41 @@
+(vertigo) Paroymsal  Positional Vertigo -> ENT Specialist
+AIDS -> Infectious Disease Specialist
+Acne -> Dermatologist
+Alcoholic hepatitis -> Gastroenterologist
+Allergy -> General Physician
+Arthritis -> General Physician
+Bronchial Asthma -> Pulmonologist
+Cervical spondylosis -> General Physician
+Chicken pox -> General Physician
+Chronic cholestasis -> Gastroenterologist
+Common Cold -> General Physician
+Dengue -> General Physician
+Diabetes  -> Endocrinologist
+Dimorphic hemmorhoids(piles) -> General Surgeon
+Drug Reaction -> General Physician
+Fungal infection -> Dermatologist
+GERD -> Gastroenterologist
+Gastroenteritis -> General Physician
+Heart attack -> Cardiologist
+Hepatitis B -> Gastroenterologist
+Hepatitis C -> Gastroenterologist
+Hepatitis D -> Gastroenterologist
+Hepatitis E -> Gastroenterologist
+Hypertension  -> General Physician
+Hyperthyroidism -> Endocrinologist
+Hypoglycemia -> General Physician
+Hypothyroidism -> Endocrinologist
+Impetigo -> Dermatologist
+Jaundice -> General Physician
+Malaria -> General Physician
+Migraine -> Neurologist
+Osteoarthristis -> Orthopedist
+Paralysis (brain hemorrhage) -> Neurologist
+Peptic ulcer diseae -> Gastroenterologist
+Pneumonia -> General Physician
+Psoriasis -> Dermatologist
+Tuberculosis -> General Physician
+Typhoid -> General Physician
+Urinary tract infection -> General Physician
+Varicose veins -> Vascular Surgeon
+hepatitis A -> Gastroenterologist

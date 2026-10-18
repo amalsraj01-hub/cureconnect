@@ -1,0 +1,24 @@
+# Stage 9: deploy on Render.
+#
+# Two ways to use this file, both land on the same settings:
+#   * New -> Blueprint in the Render dashboard, pointed at the GitHub repo
+#     (Render reads this file from the repository root), or
+#   * New -> Web Service on the repo, filling these same fields by hand.
+#
+# Free tier: the instance sleeps after roughly 15 minutes without traffic, so
+# the first visit afterwards takes ~30 s (a cold start). That is why
+# healthCheckPath exists - Render probes /health so it can tell "asleep" from
+# "broken", and it is also the URL to check when a deploy claims success.
+services:
+  - type: web
+    name: cureconnect
+    runtime: python
+    plan: free
+    # Same interpreter this project's venv runs (Python 3.14.6), so the pins
+    # in requirements.txt resolve to the wheels they were tested with.
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.14.6"
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health

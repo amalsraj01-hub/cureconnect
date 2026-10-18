@@ -1,0 +1,399 @@
+CureConnect - Stage 6 evaluation (2026-09-29)
+=============================================
+What changed in this stage:
+  1. app/normalize.py: the urination keys used to expand to BOTH "polyuria" and
+     "continuous feel of urine". The dataset gives each phrase to exactly one
+     disease - "polyuria" (120 rows) is Diabetes only, "continuous feel of
+     urine" (114 rows) is Urinary tract infection only - so "peeing a lot" was
+     attaching a UTI symptom to every sentence that mentioned urine.
+     The borrowing now follows the meaning of the patient's words: how much or
+     how often urine comes out borrows "polyuria" (10 keys: pee a lot, peeing
+     a lot, urinating/urinate a lot, urinating/urinate again and again,
+     frequent urination, urinating frequently, passing urine frequently, going
+     to the toilet often), and only "frequent urge to urinate" - the sensation
+     itself - keeps the UTI phrase.
+  2. tests/test_normalize.py: 3 new regression tests (26 -> 29 passing).
+  app/model.joblib was retrained, because train.build_text() runs app.normalize.
+
+Before / after (same 125 sentences, scripts/evaluate.py):
+
+  metric                     stage 5              stage 6 (urination split)
+  top-1 accuracy             45.6%  (57/125)      47.2%  (59/125)
+  top-3 accuracy             75.2%  (94/125)      75.2%  (94/125)
+  specialist-level top-1     70.4%  (88/125)      72.0%  (90/125)
+  'Unclear' fallback rate    44.8%  (56/125)      45.6%  (57/125)
+  accuracy of what is shown  66.7% top-1 (46/69)  69.1% top-1 (47/68)
+                             91.3% top-3          91.2% top-3
+
+  Gate comparison on the new model (so the gate is the only variable):
+    confidence < 0.30 (the old gate)        fallback 70%  shown 86.8% / 97.4%
+    confidence < 0.15 (new)                 fallback 42%  shown 66.7% / 90.3%
+    confidence < 0.15 or margin < 0.05      fallback 46%  shown 69.1% / 91.2%
+
+Exactly which sentences moved (old model + old mapping vs new model + new
+mapping, all 125 sentences, compared one by one):
+  * 'i feel very thirsty and i am urinating a lot, also losing weight without
+    trying' - Diabetes: Urinary tract infection 0.335 -> Diabetes 0.135. The
+    first guess is now right, but 0.135 is under the 0.15 threshold, so the app
+    still answers "Unclear, see a General Physician". Nothing the user sees
+    changes here (UTI maps to a General Physician too); the wrong first guess is
+    simply gone from the ranking.
+  * 'sudden weight loss with extreme hunger and i need to urinate again and
+    again' - Diabetes: Urinary tract infection 0.398 -> Diabetes 0.175, margin
+    0.111, so this one is shown and the user is sent to an Endocrinologist
+    instead of a General Physician.
+  No other sentence changed its first guess. Two sentences changed which three
+  conditions they offer, and in both the true condition is still number one.
+
+Alternatives that were measured and rejected:
+  * All 11 keys -> "polyuria": the same +2 top-1, but it also strips the UTI
+    phrase from "frequent urge to urinate with pain and mild fever", which then
+    stops answering UTI (0.399 -> hepatitis A 0.112) and takes top-3 from 94
+    down to 93.
+  * "Drop the phrase everywhere", the note stage 5 left for the next stage: that
+    is the same change as above for the urge key, so it does not survive either.
+  * Keeping "urinating again and again" on the UTI phrase: one win instead of
+    two (top-1 58/125), and it needs a rule where "again and again" means urge
+    while "frequently" means amount. The simpler rule also scores better.
+
+Honest caveats:
+  * Top-3 did not move (94/125). The split only removes evidence, so it cannot
+    add a new condition to anyone's list: it fixes ranking, not coverage.
+  * Still 0% top-1: Arthritis, Drug Reaction, GERD, Hepatitis B, Hepatitis E,
+    Hypertension, Hyperthyroidism, Hypoglycemia, Jaundice, Peptic ulcer diseae,
+    Pneumonia (11 of 41, unchanged from stage 5).
+  * 47.2% top-1 is the ceiling of TF-IDF + logistic regression over 41 classes.
+    The app's answer is the specialist, where the score is 72.0%.
+  * "burning micturition" is shared by Drug Reaction and Urinary tract infection
+    (108 rows each), which is why UTI sentences that mention burning can lose to
+    Drug Reaction. Left alone here: it needs its own measurement, not a guess.
+
+Raw run below: pytest, then scripts/evaluate.py --show-misses 40.
+.............................                                            [100%]
+29 passed in 0.35s
+
+==========================================================================
+CureConnect - model evaluation on realistic free-text sentences
+==========================================================================
+Sentences evaluated      : 125
+Distinct diseases        : 41
+Top-1 accuracy           : 47.2%  (59/125)
+Top-3 accuracy           : 75.2%  (94/125)
+Specialist-level top-1   : 72.0%  (90/125)  <- what the user actually sees
+Fallback (app gate)      : 57/125 (45.6%) -> 'Unclear' in the app
+  gate: confidence < 0.15 or margin < 0.05
+--------------------------------------------------------------------------
+Top-1 confidence spread (how sure the model is on realistic text)
+  min 0.050   25% 0.114   median 0.187   75% 0.331   max 0.829   mean 0.262
+  histogram (one # per sentence):
+    0.00-0.05 :   1  #
+    0.05-0.10 :  22  ######################
+    0.10-0.20 :  46  ##############################################
+    0.20-0.30 :  18  ##################
+    0.30-0.50 :  17  #################
+    0.50-1.01 :  21  #####################
+--------------------------------------------------------------------------
+Top-1 minus top-2 margin spread (how far ahead the winner is)
+  min 0.000   25% 0.036   median 0.105   75% 0.275   max 0.822   mean 0.199
+  histogram (one # per sentence):
+    0.00-0.02 :  20  ####################
+    0.02-0.05 :  25  #########################
+    0.05-0.10 :  16  ################
+    0.10-0.20 :  21  #####################
+    0.20-0.40 :  18  ##################
+    0.40-1.01 :  25  #########################
+--------------------------------------------------------------------------
+Threshold sweep: 'shown' = user gets a specialist answer,
+'fallback' = user gets 'Unclear, see a General Physician'
+ thresh   shown  fallback  top-1|shown  top-3|shown  top-1|hidden
+   0.05     99%        1%        47.6%        75.8%          0.0%
+   0.10     82%       18%        52.9%        82.4%         21.7%
+   0.15     58%       42%        66.7%        90.3%         20.8%
+   0.20     45%       55%        69.6%        92.9%         29.0%
+   0.25     38%       62%        77.1%        91.7%         28.6%
+   0.30     30%       70%        86.8%        97.4%         29.9%
+   0.40     21%       79%        96.2%       100.0%         34.3%
+   0.50     17%       83%       100.0%       100.0%         36.5%
+  'top-1|hidden' tells you whether the answers we hid were actually
+  worse than the ones we showed. If it is close, the gate is
+  throwing away correct answers for nothing.
+--------------------------------------------------------------------------
+Margin sweep (confidence threshold held at 0.15):
+  shown  = confidence >= threshold AND margin >= the value below
+  vetoed = confidence alone would have shown it, the margin hid it
+ margin   shown  fallback  top-1|shown  top-3|shown  top-1|hidden  vetoed
+   0.00     58%       42%        66.7%        90.3%         20.8%       0
+   0.01     57%       43%        66.2%        90.1%         22.2%       1
+   0.02     56%       44%        67.1%        90.0%         21.8%       2
+   0.05     54%       46%        69.1%        91.2%         21.1%       4
+   0.10     51%       49%        71.9%        92.2%         21.3%       8
+   0.15     42%       58%        73.6%        92.5%         27.8%      19
+   0.20     34%       66%        81.4%        90.7%         29.3%      29
+  As the veto starts biting, 'top-1|hidden' should fall well below
+  'top-1|shown'. If it does not, the margin is hiding correct answers
+  and should stay small.
+--------------------------------------------------------------------------
+What the margin veto caught (confidence >= 0.15 but margin < 0.05): 4 sentences
+  truth 'Alcoholic hepatitis' vs 'Alcoholic hepatitis' + 'Hepatitis E': confidence 0.17, margin 0.01
+      'after many years of heavy drinking my liver area pains and i have yellow eyes'
+  truth 'Hepatitis C' vs 'Hepatitis D' + 'Hepatitis B': confidence 0.17, margin 0.03
+      'yellow urine with weakness and no appetite, they told me it is hepatitis c'
+  truth 'Hyperthyroidism' vs 'Diabetes' + 'Hyperthyroidism': confidence 0.17, margin 0.02
+      'i am losing weight though i eat a lot, my heart beats fast and i sweat too much'
+  truth 'Hypothyroidism' vs 'Hypertension' + 'Hypothyroidism': confidence 0.19, margin 0.04
+      'slow thinking and swelling in my legs with a puffy face, they said my thyroid is low'
+  These are near-ties: the top-2 gap is smaller than the margin, so
+  the honest answer is 'a General Physician', not a coin flip.
+--------------------------------------------------------------------------
+The old gate vs the new ones, same model and same sentences:
+gate                                             fallback  top-1|shown  top-3|shown
+confidence < 0.30 (the old gate)                      70%        86.8%        97.4%
+confidence < 0.15 (new)                               42%        66.7%        90.3%
+confidence < 0.15 or margin < 0.05                    46%        69.1%        91.2%
+  'top-1|shown' / 'top-3|shown' are the accuracy a user actually
+  experiences, because hidden sentences never show an answer at all.
+Coverage check           : every dataset disease has test sentences
+--------------------------------------------------------------------------
+disease                                    n    top-1    top-3
+--------------------------------------------------------------------------
+Arthritis                                  3      0%      33%
+Drug Reaction                              3      0%     100%
+GERD                                       3      0%     100%
+Hepatitis B                                3      0%      33%
+Hepatitis E                                3      0%       0%
+Hypertension                               3      0%      33%
+Hyperthyroidism                            3      0%      67%
+Hypoglycemia                               3      0%      33%
+Jaundice                                   3      0%      33%
+Peptic ulcer diseae                        3      0%      67%
+Pneumonia                                  3      0%      67%
+AIDS                                       3     33%      67%
+Chicken pox                                3     33%      33%
+Dengue                                     3     33%     100%
+Gastroenteritis                            3     33%     100%
+Hepatitis C                                3     33%      67%
+Hepatitis D                                3     33%      67%
+Hypothyroidism                             3     33%     100%
+Malaria                                    3     33%     100%
+Osteoarthristis                            3     33%      33%
+Tuberculosis                               3     33%     100%
+hepatitis A                                3     33%      67%
+Allergy                                    4     50%      50%
+Bronchial Asthma                           3     67%     100%
+Chronic cholestasis                        3     67%      67%
+Common Cold                                3     67%     100%
+Dimorphic hemmorhoids(piles)               3     67%      67%
+Fungal infection                           3     67%     100%
+Migraine                                   3     67%      67%
+Typhoid                                    3     67%      67%
+Urinary tract infection                    3     67%     100%
+(vertigo) Paroymsal  Positional Vertigo    4     75%      75%
+Acne                                       3    100%     100%
+Alcoholic hepatitis                        3    100%     100%
+Cervical spondylosis                       3    100%     100%
+Diabetes                                   3    100%     100%
+Heart attack                               3    100%     100%
+Impetigo                                   3    100%     100%
+Paralysis (brain hemorrhage)               3    100%     100%
+Psoriasis                                  3    100%     100%
+Varicose veins                             3    100%     100%
+--------------------------------------------------------------------------
+Example misses (up to 40 of 66):
+  truth='(vertigo) Paroymsal  Positional Vertigo'  predicted='Hypertension' (confidence 0.05)
+      'severe giddines when i move my head, i have to hold the wall while walking'
+  truth='AIDS'  predicted='Jaundice' (confidence 0.12)
+      'repeated infections, losing weight without trying and night sweats for more than a month'
+  truth='AIDS'  predicted='Fungal infection' (confidence 0.46)
+      'doctor told me my immunity is very low, i keep getting fungal infections and diarea all the time'
+  truth='Allergy'  predicted='Fungal infection' (confidence 0.12)
+      'after taking a new tablet my body got rashes and my lips swelled up'
+  truth='Allergy'  predicted='Hypoglycemia' (confidence 0.06)
+      'my skin itches and burns after touching my neighbours cat and small bumps appear'
+  truth='Arthritis'  predicted='Osteoarthristis' (confidence 0.09)
+      'my knee joints are swollen and painful in the morning, it is hard to walk'
+  truth='Arthritis'  predicted='Hypothyroidism' (confidence 0.10)
+      'both my hands and wrists ache and feel stiff, especially early morning'
+  truth='Arthritis'  predicted='Osteoarthristis' (confidence 0.17)
+      'joint pain with swelling that keeps moving from one joint to another'
+  truth='Bronchial Asthma'  predicted='Heart attack' (confidence 0.14)
+      'i get wheezing and my chest feels tight at night, i have been using an inhaler'
+  truth='Chicken pox'  predicted='GERD' (confidence 0.05)
+      'itchy fluid filled blisters started on my chest and back and then spread everywhere'
+  truth='Chicken pox'  predicted='Impetigo' (confidence 0.10)
+      'fever with a rash that turned into blisters and now they are drying into scabs'
+  truth='Chronic cholestasis'  predicted='Jaundice' (confidence 0.08)
+      'my skin is very itchy all over and my stool is pale while my urine is dark'
+  truth='Common Cold'  predicted='Bronchial Asthma' (confidence 0.15)
+      'blocked nose with thick mucus and cough, feeling tired and dull'
+  truth='Dengue'  predicted='Chicken pox' (confidence 0.31)
+      'high fever with severe body and joint pain and red spots on my legs after mosquito bites'
+  truth='Dengue'  predicted='Chicken pox' (confidence 0.26)
+      'fever with a rash and bleeding from my gums, the report said my platelets are low'
+  truth='Dimorphic hemmorhoids(piles)'  predicted='Drug Reaction' (confidence 0.05)
+      'burning and itching around the anus with blood on the toilet paper'
+  truth='Drug Reaction'  predicted='Fungal infection' (confidence 0.19)
+      'after starting the new tablet my whole body itched and red patches appeared'
+  truth='Drug Reaction'  predicted='Fungal infection' (confidence 0.13)
+      'i got rashes and swelling of my face after taking an antibiotic'
+  truth='Drug Reaction'  predicted='GERD' (confidence 0.30)
+      'burning skin and ulcers in my mouth after a medicine, doctor said it is a drug reaction'
+  truth='Fungal infection'  predicted='Psoriasis' (confidence 0.33)
+      'skin between my toes is peeling and itching, my nails look thick and yellow'
+  truth='GERD'  predicted='Migraine' (confidence 0.22)
+      'burning in my chest after eating with sour water coming into my mouth'
+  truth='GERD'  predicted='Migraine' (confidence 0.19)
+      'acid reflux at night with a bitter taste and pain in my stomach'
+  truth='GERD'  predicted='Migraine' (confidence 0.23)
+      'heartburn and a feeling of food coming back up when i lie down'
+  truth='Gastroenteritis'  predicted='GERD' (confidence 0.11)
+      'loose motions with vomiting and stomach cramps since yesterdy'
+  truth='Gastroenteritis'  predicted='hepatitis A' (confidence 0.14)
+      'watery diarrhoea many times a day with weakness and mild fever'
+  truth='Hepatitis B'  predicted='Hepatitis D' (confidence 0.26)
+      'yellow eyes and dark urine with tiredness, my report says hepatitis b'
+  truth='Hepatitis B'  predicted='Chronic cholestasis' (confidence 0.17)
+      'i have jaundice with vomiting and pain in the right upper abdomen'
+  truth='Hepatitis B'  predicted='Hepatitis E' (confidence 0.28)
+      'loss of appetite, body ache and yellow skin, the doctor said liver infection'
+  truth='Hepatitis C'  predicted='Hepatitis B' (confidence 0.13)
+      'my eyes and skin look yellow with tiredness, the blood test showed hepatitis c'
+  truth='Hepatitis C'  predicted='Hepatitis D' (confidence 0.17)
+      'yellow urine with weakness and no appetite, they told me it is hepatitis c'
+  truth='Hepatitis D'  predicted='Chronic cholestasis' (confidence 0.11)
+      'yellow eyes with tiredness and my upper abdomen feels tender to touch'
+  truth='Hepatitis D'  predicted='Hepatitis E' (confidence 0.35)
+      'my skin is yellowish with fatigue, a second liver infection was found in my tests'
+  truth='Hepatitis E'  predicted='Chronic cholestasis' (confidence 0.15)
+      'jaundice with loose motions after drinking water from a dirty source'
+  truth='Hepatitis E'  predicted='Gastroenteritis' (confidence 0.07)
+      'yellow skin and vomiting with tiredness, our area had water contamination'
+  truth='Hepatitis E'  predicted='Chronic cholestasis' (confidence 0.12)
+      'i became yellow eyed with fever and nausea after eating outside food'
+  truth='hepatitis A'  predicted='Chronic cholestasis' (confidence 0.24)
+      'fever with jaundice and loss of appetite after eating street food'
+  truth='hepatitis A'  predicted='Hepatitis B' (confidence 0.08)
+      'yellow eyes with nausea and dark urine, i feel very weak and sleepy'
+  truth='Hypertension'  predicted='Pneumonia' (confidence 0.12)
+      'my bp reading was 160 by 100 with headache and giddines'
+  truth='Hypertension'  predicted='Pneumonia' (confidence 0.12)
+      'headache and neck pain when stressed, the machine showed high blood pressure'
+  truth='Hypertension'  predicted='Pneumonia' (confidence 0.11)
+      'high bp with palpitations and blurred vision in the evening'
+--------------------------------------------------------------------------
+Reminder: top-1 counts only the model's first guess. Top-3 counts the
+truth appearing anywhere in the first three guesses, which is what the
+app actually shows the user. Specialist-level top-1 is the honest score
+for this app, since patients are sent to a specialist, not a diagnosis.
+'Unclear' needs confidence < the threshold OR a margin under the margin
+threshold; predict() makes that call in one function, so the API and this
+report always agree.
+This run does NOT test app/safety.py, which runs before the classifier.
+
+Raw before/after model comparison (old model + old mapping vs new model + new mapping):
+BEFORE     top-1 57/125  top-3 94/125  specialist 88/125  fallback 56/125
+           of what is SHOWN: 46/69 = 66.7%
+AFTER      top-1 59/125  top-3 94/125  specialist 90/125  fallback 57/125
+           of what is SHOWN: 47/68 = 69.1%
+
+top-1 label changes:
+  Diabetes: Urinary tract infection 0.335 -> Diabetes 0.135 (margin 0.090, hidden by the gate)
+      'i feel very thirsty and i am urinating a lot, also losing weight without trying'
+      old clean: i feel polyuria and i am polyuria continuous feel of urine also weight loss without trying
+      new clean: i feel polyuria and i am polyuria also weight loss without trying
+  Diabetes: Urinary tract infection 0.398 -> Diabetes 0.175 (margin 0.111, shown by the gate)
+      'sudden weight loss with extreme hunger and i need to urinate again and again'
+      old clean: sudden weight loss with extreme hunger and i need to polyuria continuous feel of urine
+      new clean: sudden weight loss with extreme hunger and i need to polyuria
+  2 of 125 sentences changed their first guess
+
+top-3 membership changes (order ignored):
+  Diabetes: ['Diabetes', 'Jaundice', 'Urinary tract infection'] -> ['Diabetes', 'Hyperthyroidism', 'Jaundice']
+      'sudden weight loss with extreme hunger and i need to urinate again and again'
+  Urinary tract infection: ['Diabetes', 'Urinary tract infection', 'hepatitis A'] -> ['Chicken pox', 'Urinary tract infection', 'hepatitis A']
+      'frequent urge to urinate with pain and mild fever'
+  2 of 125 sentences changed which three conditions they offer
+
+--------------------------------------------------------------------------
+Follow-up (2026-10-01): two mapping bugs, measured on the frozen 20
+--------------------------------------------------------------------------
+Benchmark of record for this change: scripts/holdout20.py. The 125 above were
+read and quoted while the pipeline was built, so they stay the optimistic set and
+are used here only as a regression guard. No sentence was edited; the frozen
+fingerprint 6f5f4dd64beb4653 is unchanged and tests/test_holdout_frozen.py passes.
+
+What was wrong
+  1. Oesophageal reflux wording borrowed a stomach word. Twelve keys (acid
+     reflux, reflux, heartburn, sour water, sour taste, sour liquid, bitter
+     taste, food coming back up, food comes back, regurgitation, burning in my
+     chest after eating, burning in the chest after eating) all expanded to
+     "acidity indigestion". The dataset gives "indigestion" to Migraine (114
+     rows) and Peptic ulcer (108) and never to GERD, so every heartburn sentence
+     carried a Migraine symptom the patient never described. Two of the three
+     "GERD answered as Migraine" sentences in the 125 list above (0.22, 0.19) sit
+     on exactly this bug, and so does the frozen holdout's first sentence. Those
+     twelve keys now borrow "acidity", which is GERD's own word for reflux.
+     The two stomach keys (burning in my stomach, burning pain in my stomach)
+     keep "indigestion" on purpose: burning in the stomach IS the dataset's
+     indigestion, and stripping it there cost a Peptic ulcer sentence its only
+     clue - "burning pain in my stomach before food which gets better after
+     eating" fell from rank 3 at 0.047 to rank 19 at 0.021. The bug was
+     oesophageal wording borrowing a stomach word, not stomach wording using it.
+  2. Thirst and urine volume in lay words reached no Diabetes word at all. "my
+     mouth stays dry", "bottles of water", "i pass a lot of urine" were not in
+     the map, so the holdout's Diabetes sentence had no Diabetes evidence
+     whatever. 13 thirst keys and 9 volume keys added, all borrowing "polyuria"
+     for the same reason the existing thirst keys do: the dataset has no thirst
+     phrase, and "polyuria" is all 120 Diabetes rows and no other condition.
+
+Before / after on the frozen 20 (scripts/holdout20.py run twice, same 20
+sentences):
+  metric                    before              after
+  top-1 accuracy            35.0%  (7/20)       40.0%  (8/20)
+  top-3 accuracy            55.0%  (11/20)      60.0%  (12/20)
+  'Unclear' fallback        75.0%  (15/20)      85.0%  (17/20)
+  specialist-level top-1    40.0%  (8/20)       45.0%  (9/20)
+  shown AND correct         15.0%  (3/20)       15.0%  (3/20)
+
+The two sentences that passed the gate wrongly, i.e. the reason for the change:
+  * GERD: Migraine 0.156 -> Migraine 0.061, with GERD now rank 3 at 0.052, so the
+    gate answers "Unclear".
+      clean before: "...and my mouth fills with acidity indigestion"
+      clean after : "...and my mouth fills with acidity"
+    GERD cannot rank first on this sentence: "acidity" is itself shared (108 GERD
+    rows against 114 Migraine) and it says nothing else the dataset knows. Below
+    the gate is the honest outcome here; ranking GERD first would have meant
+    inventing a symptom the patient never reported.
+  * Diabetes: Urinary tract infection 0.181 -> Diabetes 0.117 (now rank 1), so the
+    gate answers "Unclear". Cleaning gained "polyuria" three times, once per
+    phrase: "my polyuria and i finish two polyuria a day and i polyuria".
+    The wrong first guess is gone; the right one is the silent leader.
+
+Cost, stated plainly: two more of the 20 now answer "Unclear". That is the
+intended direction - "Unclear" on a sentence the model cannot separate is worth
+more than a confident wrong answer - and 3/20 shown-and-correct did not move.
+
+app/model.joblib was NOT retrained, and that is checked rather than assumed.
+app/train.py pushes the training rows through the same normalize(), so a mapping
+change is only safe if the training text cleans identically. All 131 dataset
+symptom phrases clean byte-for-byte the same before and after, so the saved model
+is still the model the mapping describes. Verified in memory; nothing written.
+
+Regression guard on the 125 (not the benchmark):
+  top-1            47.2%  (59/125)  ->  49.6%  (62/125)
+  top-3            75.2%  (94/125)  ->  75.2%  (94/125)
+  specialist top-1 72.0%  (90/125)  ->  74.4%  (93/125)
+  fallback         45.6%  (57/125)  ->  48.0%  (60/125)
+  Which sentences moved: only the three GERD sentences listed above, Migraine
+  0.222/0.187/0.232 -> GERD 0.127/0.129/0.097 (all still under the gate, so what
+  the user sees there goes from a wrong specialist to "Unclear"). No other
+  sentence changed its first guess, and the Peptic ulcer sentence stayed at
+  rank 3 because its key kept "indigestion".
+  Conditions with 0% top-1: 11 -> 10, because GERD is now the first guess of
+  three sentences instead of never being one. The other 10 are unchanged:
+  Arthritis, Drug Reaction, Hepatitis B, Hepatitis E, Hypertension,
+  Hyperthyroidism, Hypoglycemia, Jaundice, Peptic ulcer diseae, Pneumonia.
+
+tests/test_normalize.py 15 -> 18 passing (3 new regression tests: oesophageal
+wording must not borrow "indigestion", stomach burning must keep it for Peptic
+ulcer, and lay thirst/urine-volume wording must reach "polyuria" without dragging
+in the UTI-only "continuous feel of urine"). Whole suite 38 -> 41.

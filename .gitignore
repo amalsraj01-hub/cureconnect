@@ -1,0 +1,14 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.ipynb_checkpoints/
+# app/model.joblib is tracked on purpose (Stage 9): a Render deploy starts
+# from a clean checkout, and rebuilding the model needs data/dataset.csv from
+# Kaggle. The ~242 KB file is cheaper to commit than to rebuild on deploy -
+# and without it every /recommend would answer 500.
+data/*.csv
+# ...except our small hand-written evaluation set, which we DO want in git.
+# (The big Kaggle data/dataset.csv stays ignored on purpose.)
+!data/test_sentences.csv
+.DS_Store

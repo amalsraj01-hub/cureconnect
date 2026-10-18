@@ -1,0 +1,15 @@
+# Versions are pinned (Stage 9): app/model.joblib was trained under exactly
+# these, and scikit-learn in particular must match for joblib to load it.
+# Bump a pin only together with re-running python -m app.train and pytest.
+fastapi==0.141.1
+uvicorn==0.54.0
+pydantic==2.13.5
+requests==2.34.2
+python-dotenv==1.2.3
+pandas==3.0.6
+numpy==2.5.3
+scikit-learn==1.9.1
+joblib==1.6.0
+vaderSentiment==3.3.2
+pytest==9.1.1
+httpx2==2.13.1

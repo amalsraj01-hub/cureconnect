@@ -1,0 +1,272 @@
+CureConnect - Stage 5 evaluation (2026-09-29)
+=============================================
+What changed in this stage:
+  1. app/normalize.py: thirsty / thirst / very thirsty used to expand to
+     "polyuria excessive hunger" -> now just "polyuria". The dataset has no
+     thirst phrase at all, and "excessive hunger" belongs to 4 diseases
+     (Diabetes, Hyperthyroidism, Hypoglycemia, Migraine), so it was asserting a
+     symptom the patient never reported.
+  2. app/classifier.py: CONFIDENCE_THRESHOLD 0.30 -> 0.15.
+  3. app/classifier.py: MARGIN_THRESHOLD = 0.05 and is_low_confidence().
+     "Unclear" now needs confidence < 0.15 OR (top-1 - top-2) < 0.05. The
+     margin is a veto used alongside confidence, never a replacement for it:
+     it can only add fallbacks, never remove one.
+  app/model.joblib was retrained, because train.build_text() runs app.normalize.
+
+Before / after (same 125 sentences, scripts/evaluate.py):
+
+  metric                     stage 4 (conf 0.30)        stage 5 (conf 0.15 + margin 0.05)
+  top-1 accuracy             45.6%  (57/125)            45.6%  (57/125)
+  top-3 accuracy             75.2%  (94/125)            75.2%  (94/125)
+  specialist-level top-1     70.4%  (88/125)            70.4%  (88/125)
+  'Unclear' fallback rate    68.8%  (86/125)            44.8%  (56/125)
+  accuracy of what is shown  82.5% top-1 / 97.5% top-3  66.7% top-1 / 91.3% top-3
+
+  Gate-only comparison on the new model (so the gate is the only variable):
+    confidence < 0.30          fallback 68%  shown 82.5% / 97.5%
+    confidence < 0.15          fallback 42%  shown 64.4% / 90.4%
+    + margin < 0.05            fallback 45%  shown 66.7% / 91.3%
+
+Why 0.05 for the margin: it hid 4 sentences, 3 of them wrong (Hepatitis C vs D,
+Hyperthyroidism vs Diabetes, Hypothyroidism vs Hypertension) and 1 right
+(Alcoholic hepatitis vs Hepatitis E at margin 0.01). That is +2.3 points of
+shown accuracy for +2.4 points of fallback. Moving to 0.10 buys 2.5 more points
+of accuracy for 3 more points of fallback; 0.15 starts hiding 18 sentences.
+
+Honest caveats:
+  * Top-1 did NOT move, because the thirst mapping was not the whole bug. The
+    frequent-urination keys expand to "polyuria continuous feel of urine", and
+    "continuous feel of urine" is a UTI-only phrase, so it swamps the Diabetes
+    evidence: "i feel very thirsty and i am urinating a lot, also losing
+    weight" still answers Urinary tract infection at 0.33, and the standing
+    smoke sentence "i pee a lot and i am always thirsty" answers UTI at 0.372.
+    Dropping that phrase (measured against the current model) fixes both
+    Diabetes sentences and costs one UTI sentence: top-1 57/125 -> 58/125. It
+    is a mapping redesign, so it was NOT applied in this stage.
+  * 45.6% top-1 is the ceiling of TF-IDF + logistic regression over 41 classes.
+    Still 0% top-1: Arthritis, Drug Reaction, GERD, Hepatitis B, Hepatitis E,
+    Hypertension, Hyperthyroidism, Hypoglycemia, Jaundice, Peptic ulcer
+    diseae, Pneumonia. More features (symptom-set matching), not more threshold
+    tuning, is what moves these.
+
+Raw run below: pytest, then scripts/evaluate.py --show-misses 40.
+
+..........................                                               [100%]
+26 passed in 0.29s
+
+==========================================================================
+CureConnect - model evaluation on realistic free-text sentences
+==========================================================================
+Sentences evaluated      : 125
+Distinct diseases        : 41
+Top-1 accuracy           : 45.6%  (57/125)
+Top-3 accuracy           : 75.2%  (94/125)
+Specialist-level top-1   : 70.4%  (88/125)  <- what the user actually sees
+Fallback (app gate)      : 56/125 (44.8%) -> 'Unclear' in the app
+  gate: confidence < 0.15 or margin < 0.05
+--------------------------------------------------------------------------
+Top-1 confidence spread (how sure the model is on realistic text)
+  min 0.050   25% 0.114   median 0.188   75% 0.335   max 0.829   mean 0.265
+  histogram (one # per sentence):
+    0.00-0.05 :   1  #
+    0.05-0.10 :  22  ######################
+    0.10-0.20 :  44  ############################################
+    0.20-0.30 :  18  ##################
+    0.30-0.50 :  19  ###################
+    0.50-1.01 :  21  #####################
+--------------------------------------------------------------------------
+Top-1 minus top-2 margin spread (how far ahead the winner is)
+  min 0.000   25% 0.036   median 0.109   75% 0.295   max 0.822   mean 0.202
+  histogram (one # per sentence):
+    0.00-0.02 :  20  ####################
+    0.02-0.05 :  25  #########################
+    0.05-0.10 :  15  ###############
+    0.10-0.20 :  20  ####################
+    0.20-0.40 :  21  #####################
+    0.40-1.01 :  24  ########################
+--------------------------------------------------------------------------
+Threshold sweep: 'shown' = user gets a specialist answer,
+'fallback' = user gets 'Unclear, see a General Physician'
+ thresh   shown  fallback  top-1|shown  top-3|shown  top-1|hidden
+   0.05     99%        1%        46.0%        75.8%          0.0%
+   0.10     82%       18%        51.0%        82.4%         21.7%
+   0.15     58%       42%        64.4%        90.4%         19.2%
+   0.20     46%       54%        67.2%        93.1%         26.9%
+   0.25     40%       60%        74.0%        92.0%         26.7%
+   0.30     32%       68%        82.5%        97.5%         28.2%
+   0.40     20%       80%        96.0%       100.0%         33.0%
+   0.50     17%       83%       100.0%       100.0%         34.6%
+  'top-1|hidden' tells you whether the answers we hid were actually
+  worse than the ones we showed. If it is close, the gate is
+  throwing away correct answers for nothing.
+--------------------------------------------------------------------------
+Margin sweep (confidence threshold held at 0.15):
+  shown  = confidence >= threshold AND margin >= the value below
+  vetoed = confidence alone would have shown it, the margin hid it
+ margin   shown  fallback  top-1|shown  top-3|shown  top-1|hidden  vetoed
+   0.00     58%       42%        64.4%        90.4%         19.2%       0
+   0.01     58%       42%        63.9%        90.3%         20.8%       1
+   0.02     57%       43%        64.8%        90.1%         20.4%       2
+   0.05     55%       45%        66.7%        91.3%         19.6%       4
+   0.10     52%       48%        69.2%        92.3%         20.0%       8
+   0.15     44%       56%        70.9%        92.7%         25.7%      18
+   0.20     36%       64%        77.8%        91.1%         27.5%      28
+  As the veto starts biting, 'top-1|hidden' should fall well below
+  'top-1|shown'. If it does not, the margin is hiding correct answers
+  and should stay small.
+--------------------------------------------------------------------------
+What the margin veto caught (confidence >= 0.15 but margin < 0.05): 4 sentences
+  truth 'Alcoholic hepatitis' vs 'Alcoholic hepatitis' + 'Hepatitis E': confidence 0.17, margin 0.01
+      'after many years of heavy drinking my liver area pains and i have yellow eyes'
+  truth 'Hepatitis C' vs 'Hepatitis D' + 'Hepatitis B': confidence 0.17, margin 0.03
+      'yellow urine with weakness and no appetite, they told me it is hepatitis c'
+  truth 'Hyperthyroidism' vs 'Diabetes' + 'Hyperthyroidism': confidence 0.17, margin 0.02
+      'i am losing weight though i eat a lot, my heart beats fast and i sweat too much'
+  truth 'Hypothyroidism' vs 'Hypertension' + 'Hypothyroidism': confidence 0.19, margin 0.04
+      'slow thinking and swelling in my legs with a puffy face, they said my thyroid is low'
+  These are near-ties: the top-2 gap is smaller than the margin, so
+  the honest answer is 'a General Physician', not a coin flip.
+--------------------------------------------------------------------------
+The old gate vs the new ones, same model and same sentences:
+gate                                             fallback  top-1|shown  top-3|shown
+confidence < 0.30 (the old gate)                      68%        82.5%        97.5%
+confidence < 0.15 (new)                               42%        64.4%        90.4%
+confidence < 0.15 or margin < 0.05                    45%        66.7%        91.3%
+  'top-1|shown' / 'top-3|shown' are the accuracy a user actually
+  experiences, because hidden sentences never show an answer at all.
+Coverage check           : every dataset disease has test sentences
+--------------------------------------------------------------------------
+disease                                    n    top-1    top-3
+--------------------------------------------------------------------------
+Arthritis                                  3      0%      33%
+Drug Reaction                              3      0%     100%
+GERD                                       3      0%     100%
+Hepatitis B                                3      0%      33%
+Hepatitis E                                3      0%       0%
+Hypertension                               3      0%      33%
+Hyperthyroidism                            3      0%      67%
+Hypoglycemia                               3      0%      33%
+Jaundice                                   3      0%      33%
+Peptic ulcer diseae                        3      0%      67%
+Pneumonia                                  3      0%      67%
+AIDS                                       3     33%      67%
+Chicken pox                                3     33%      33%
+Dengue                                     3     33%     100%
+Diabetes                                   3     33%     100%
+Gastroenteritis                            3     33%     100%
+Hepatitis C                                3     33%      67%
+Hepatitis D                                3     33%      67%
+Hypothyroidism                             3     33%     100%
+Malaria                                    3     33%     100%
+Osteoarthristis                            3     33%      33%
+Tuberculosis                               3     33%     100%
+hepatitis A                                3     33%      67%
+Allergy                                    4     50%      50%
+Bronchial Asthma                           3     67%     100%
+Chronic cholestasis                        3     67%      67%
+Common Cold                                3     67%     100%
+Dimorphic hemmorhoids(piles)               3     67%      67%
+Fungal infection                           3     67%     100%
+Migraine                                   3     67%      67%
+Typhoid                                    3     67%      67%
+Urinary tract infection                    3     67%     100%
+(vertigo) Paroymsal  Positional Vertigo    4     75%      75%
+Acne                                       3    100%     100%
+Alcoholic hepatitis                        3    100%     100%
+Cervical spondylosis                       3    100%     100%
+Heart attack                               3    100%     100%
+Impetigo                                   3    100%     100%
+Paralysis (brain hemorrhage)               3    100%     100%
+Psoriasis                                  3    100%     100%
+Varicose veins                             3    100%     100%
+--------------------------------------------------------------------------
+Example misses (up to 40 of 68):
+  truth='(vertigo) Paroymsal  Positional Vertigo'  predicted='Hypertension' (confidence 0.05)
+      'severe giddines when i move my head, i have to hold the wall while walking'
+  truth='AIDS'  predicted='Jaundice' (confidence 0.12)
+      'repeated infections, losing weight without trying and night sweats for more than a month'
+  truth='AIDS'  predicted='Fungal infection' (confidence 0.46)
+      'doctor told me my immunity is very low, i keep getting fungal infections and diarea all the time'
+  truth='Allergy'  predicted='Fungal infection' (confidence 0.12)
+      'after taking a new tablet my body got rashes and my lips swelled up'
+  truth='Allergy'  predicted='Hypoglycemia' (confidence 0.06)
+      'my skin itches and burns after touching my neighbours cat and small bumps appear'
+  truth='Arthritis'  predicted='Osteoarthristis' (confidence 0.09)
+      'my knee joints are swollen and painful in the morning, it is hard to walk'
+  truth='Arthritis'  predicted='Hypothyroidism' (confidence 0.10)
+      'both my hands and wrists ache and feel stiff, especially early morning'
+  truth='Arthritis'  predicted='Osteoarthristis' (confidence 0.17)
+      'joint pain with swelling that keeps moving from one joint to another'
+  truth='Bronchial Asthma'  predicted='Heart attack' (confidence 0.14)
+      'i get wheezing and my chest feels tight at night, i have been using an inhaler'
+  truth='Chicken pox'  predicted='GERD' (confidence 0.05)
+      'itchy fluid filled blisters started on my chest and back and then spread everywhere'
+  truth='Chicken pox'  predicted='Impetigo' (confidence 0.10)
+      'fever with a rash that turned into blisters and now they are drying into scabs'
+  truth='Chronic cholestasis'  predicted='Jaundice' (confidence 0.08)
+      'my skin is very itchy all over and my stool is pale while my urine is dark'
+  truth='Common Cold'  predicted='Bronchial Asthma' (confidence 0.15)
+      'blocked nose with thick mucus and cough, feeling tired and dull'
+  truth='Dengue'  predicted='Chicken pox' (confidence 0.31)
+      'high fever with severe body and joint pain and red spots on my legs after mosquito bites'
+  truth='Dengue'  predicted='Chicken pox' (confidence 0.26)
+      'fever with a rash and bleeding from my gums, the report said my platelets are low'
+  truth='Diabetes'  predicted='Urinary tract infection' (confidence 0.33)
+      'i feel very thirsty and i am urinating a lot, also losing weight without trying'
+  truth='Diabetes'  predicted='Urinary tract infection' (confidence 0.40)
+      'sudden weight loss with extreme hunger and i need to urinate again and again'
+  truth='Dimorphic hemmorhoids(piles)'  predicted='Drug Reaction' (confidence 0.05)
+      'burning and itching around the anus with blood on the toilet paper'
+  truth='Drug Reaction'  predicted='Fungal infection' (confidence 0.19)
+      'after starting the new tablet my whole body itched and red patches appeared'
+  truth='Drug Reaction'  predicted='Fungal infection' (confidence 0.13)
+      'i got rashes and swelling of my face after taking an antibiotic'
+  truth='Drug Reaction'  predicted='GERD' (confidence 0.30)
+      'burning skin and ulcers in my mouth after a medicine, doctor said it is a drug reaction'
+  truth='Fungal infection'  predicted='Psoriasis' (confidence 0.33)
+      'skin between my toes is peeling and itching, my nails look thick and yellow'
+  truth='GERD'  predicted='Migraine' (confidence 0.22)
+      'burning in my chest after eating with sour water coming into my mouth'
+  truth='GERD'  predicted='Migraine' (confidence 0.19)
+      'acid reflux at night with a bitter taste and pain in my stomach'
+  truth='GERD'  predicted='Migraine' (confidence 0.23)
+      'heartburn and a feeling of food coming back up when i lie down'
+  truth='Gastroenteritis'  predicted='GERD' (confidence 0.11)
+      'loose motions with vomiting and stomach cramps since yesterdy'
+  truth='Gastroenteritis'  predicted='hepatitis A' (confidence 0.14)
+      'watery diarrhoea many times a day with weakness and mild fever'
+  truth='Hepatitis B'  predicted='Hepatitis D' (confidence 0.26)
+      'yellow eyes and dark urine with tiredness, my report says hepatitis b'
+  truth='Hepatitis B'  predicted='Chronic cholestasis' (confidence 0.17)
+      'i have jaundice with vomiting and pain in the right upper abdomen'
+  truth='Hepatitis B'  predicted='Hepatitis E' (confidence 0.28)
+      'loss of appetite, body ache and yellow skin, the doctor said liver infection'
+  truth='Hepatitis C'  predicted='Hepatitis B' (confidence 0.13)
+      'my eyes and skin look yellow with tiredness, the blood test showed hepatitis c'
+  truth='Hepatitis C'  predicted='Hepatitis D' (confidence 0.17)
+      'yellow urine with weakness and no appetite, they told me it is hepatitis c'
+  truth='Hepatitis D'  predicted='Chronic cholestasis' (confidence 0.11)
+      'yellow eyes with tiredness and my upper abdomen feels tender to touch'
+  truth='Hepatitis D'  predicted='Hepatitis E' (confidence 0.35)
+      'my skin is yellowish with fatigue, a second liver infection was found in my tests'
+  truth='Hepatitis E'  predicted='Chronic cholestasis' (confidence 0.15)
+      'jaundice with loose motions after drinking water from a dirty source'
+  truth='Hepatitis E'  predicted='Gastroenteritis' (confidence 0.07)
+      'yellow skin and vomiting with tiredness, our area had water contamination'
+  truth='Hepatitis E'  predicted='Chronic cholestasis' (confidence 0.12)
+      'i became yellow eyed with fever and nausea after eating outside food'
+  truth='hepatitis A'  predicted='Chronic cholestasis' (confidence 0.24)
+      'fever with jaundice and loss of appetite after eating street food'
+  truth='hepatitis A'  predicted='Hepatitis B' (confidence 0.08)
+      'yellow eyes with nausea and dark urine, i feel very weak and sleepy'
+  truth='Hypertension'  predicted='Pneumonia' (confidence 0.12)
+      'my bp reading was 160 by 100 with headache and giddines'
+--------------------------------------------------------------------------
+Reminder: top-1 counts only the model's first guess. Top-3 counts the
+truth appearing anywhere in the first three guesses, which is what the
+app actually shows the user. Specialist-level top-1 is the honest score
+for this app, since patients are sent to a specialist, not a diagnosis.
+'Unclear' needs confidence < the threshold OR a margin under the margin
+threshold; predict() makes that call in one function, so the API and this
+report always agree.
+This run does NOT test app/safety.py, which runs before the classifier.
