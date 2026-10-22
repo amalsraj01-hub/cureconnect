@@ -5,22 +5,27 @@
 #     (Render reads this file from the repository root), or
 #   * New -> Web Service on the repo, filling these same fields by hand.
 #
-# Free tier: the instance sleeps after roughly 15 minutes without traffic, so
-# the first visit afterwards takes ~30 s (a cold start). That is why
-# healthCheckPath exists - Render probes /health so it can tell "asleep" from
-# "broken", and it is also the URL to check when a deploy claims success.
+# Free tier: the instance spins down after 15 minutes without inbound traffic,
+# and spinning back up takes about a minute (Render shows a loading page
+# meanwhile). That is why healthCheckPath exists - Render probes /health so it
+# can tell "asleep" from "broken", and it is also the URL to check when a
+# deploy claims success.
 services:
   - type: web
     name: cureconnect
     runtime: python
     plan: free
-    # Same interpreter this project's venv runs (Python 3.14.6), so the pins
-    # in requirements.txt resolve to the wheels they were tested with.
+    # Deploy on every push to main. `autoDeployTrigger` is the current name
+    # for this; the older `autoDeploy: true` still works but is deprecated.
+    # Use 'off' to deploy by hand instead.
+    autoDeployTrigger: commit
+    # Render pins the interpreter through the PYTHON_VERSION environment
+    # variable (or a .python-version file - there is no `pythonVersion` key in
+    # the blueprint spec). 3.14.8 is Render's current default for new
+    # services, and it is the version the pins in requirements.txt were
+    # checked against.
     envVars:
       - key: PYTHON_VERSION
-        # Render's current default (their docs list 3.14.8). Same cp314 wheel
-        # ABI as the local 3.14.6 venv, so the pinned packages resolve the
-        # same way; 3.14.8 is used because Render is guaranteed to offer it.
         value: "3.14.8"
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT

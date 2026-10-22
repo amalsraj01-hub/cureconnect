@@ -74,7 +74,7 @@ One process serves everything: the page at `/`, the API at `/recommend`,
 docs at `/docs`. The exact settings live in `render.yaml` at the repository
 root (build `pip install -r requirements.txt`, start
 `uvicorn app.main:app --host 0.0.0.0 --port $PORT`, health check `/health`,
-Python pinned to the version the model was built with).
+Python pinned with `PYTHON_VERSION`).
 
 1. Push the project to a GitHub repository. It must include
    `app/model.joblib`: a clean checkout cannot rebuild it without the Kaggle
@@ -85,11 +85,31 @@ Python pinned to the version the model was built with).
    same build and start commands by hand.)
 3. Open the `onrender.com` URL it hands back: `/` is the app.
 
+### Check it before clicking Deploy
+
+Three scripts answer the questions that otherwise only show up in the Render
+build log, one failure at a time:
+
+```bash
+python scripts/preflight_render.py   # every pin exists on PyPI and has a
+                                      # cp314 wheel, so no source build
+python scripts/smoke_serve.py        # starts the app exactly the way Render
+                                      # does and exercises every endpoint
+python scripts/memcheck.py           # the app's peak memory against the
+                                      # 512 MB free-tier limit
+```
+
+Measured on 2026-10-22: every pin resolves to a prebuilt wheel, all six
+smoke checks pass (including a live Overpass search that returned 10
+doctors for Kannur), and the app's peak footprint is **171.5 MB** - about
+340 MB of headroom under the free tier's 512 MB.
+
 What the free tier actually changes, plainly:
 
-- **Cold start ~30 s.** The instance sleeps after about 15 minutes without
-  visitors; the first request after that wakes it. Wait and reload once
-  before concluding it is down - `GET /health` is the cheap check.
+- **Cold start ~1 minute.** The instance sleeps after 15 minutes without
+  any inbound traffic; the next request wakes it, and Render shows a loading
+  page meanwhile. Wait and reload once before concluding it is down -
+  `GET /health` is the cheap check.
 - **The rate limit is per process, in memory** (Known limitations below):
   every deploy or sleep hands everyone a fresh 10/min window.
 - **The client IP is `X-Forwarded-For`** behind Render's proxy; the limiter
